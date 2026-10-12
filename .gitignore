@@ -11,3 +11,8 @@ wheels/
 
 # Local credentials
 .env
+.env.*
+!.env.example
+
+# Local machine metadata
+.DS_Store

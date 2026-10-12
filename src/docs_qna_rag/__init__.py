@@ -144,27 +144,13 @@ def ingest(knowledge_base: Path) -> int:
 
 
 def answer_question(question: str) -> str:
-    embedder = _embedder()
-    query_vector = embedder.encode(question, normalize_embeddings=True).tolist()
-    client = _qdrant_client()
-    collection = os.getenv("QDRANT_COLLECTION", DEFAULT_COLLECTION)
-    if not client.collection_exists(collection):
-        raise RuntimeError("The Qdrant collection is empty. Run `docs-qna-rag ingest` first.")
-
-    results = client.query_points(
-        collection_name=collection,
-        query=query_vector,
-        limit=TOP_K,
-        with_payload=True,
-    ).points
-    if not results:
+    context_entries = retrieve_context(question)
+    if not context_entries:
         raise RuntimeError("No matching document chunks were found.")
 
     context = "\n\n".join(
-        f"[Source: {point.payload['source']}, page {point.payload['page']}]\n"
-        f"{point.payload['text']}"
-        for point in results
-        if point.payload
+        f"[Source: {entry['source']}, page {entry['page']}]\n{entry['text']}"
+        for entry in context_entries
     )
     groq_client = Groq(api_key=_required_env("GROQ_API_KEY"))
     response = groq_client.chat.completions.create(
@@ -185,6 +171,38 @@ def answer_question(question: str) -> str:
         ],
     )
     return response.choices[0].message.content or "No answer was returned."
+
+
+def retrieve_context(question: str, limit: int = TOP_K) -> list[dict[str, Any]]:
+    embedder = _embedder()
+    query_vector = embedder.encode(question, normalize_embeddings=True).tolist()
+    client = _qdrant_client()
+    collection = os.getenv("QDRANT_COLLECTION", DEFAULT_COLLECTION)
+    if not client.collection_exists(collection):
+        raise RuntimeError("The Qdrant collection is empty. Run `docs-qna-rag ingest` first.")
+
+    results = client.query_points(
+        collection_name=collection,
+        query=query_vector,
+        limit=limit,
+        with_payload=True,
+    ).points
+    if not results:
+        raise RuntimeError("No matching document chunks were found.")
+
+    entries: list[dict[str, Any]] = []
+    for point in results:
+        payload = point.payload or {}
+        if not payload.get("text"):
+            continue
+        entries.append(
+            {
+                "source": payload.get("source", "unknown"),
+                "page": payload.get("page", 0),
+                "text": payload.get("text", ""),
+            }
+        )
+    return entries
 
 
 def _build_parser() -> argparse.ArgumentParser:
