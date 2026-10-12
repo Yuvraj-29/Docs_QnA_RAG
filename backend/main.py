@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,14 @@ from docs_qna_rag import answer_question, ingest, retrieve_context
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    if origin.strip()
+]
 
 app = FastAPI(
     title="Docs Q&A RAG",
@@ -20,7 +29,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,10 +38,6 @@ app.add_middleware(
 
 class QuestionRequest(BaseModel):
     question: str = Field(..., min_length=1)
-
-
-class IngestRequest(BaseModel):
-    knowledge_base: str | None = None
 
 
 @app.get("/api/health")
@@ -49,8 +54,16 @@ def list_documents() -> dict[str, list[str]]:
 
 
 @app.post("/api/ingest")
-def ingest_documents(payload: IngestRequest | None = None) -> dict[str, int | str]:
-    knowledge_base_value = (payload.knowledge_base if payload and payload.knowledge_base else os.getenv("KNOWLEDGE_BASE", str(PROJECT_ROOT / "knowledge_base")))
+def ingest_documents(x_ingest_token: str | None = Header(default=None)) -> dict[str, int | str]:
+    if os.getenv("ENABLE_INGEST_API", "false").lower() != "true":
+        raise HTTPException(status_code=404, detail="Not found.")
+    ingest_key = os.getenv("INGEST_API_KEY")
+    if not ingest_key:
+        raise HTTPException(status_code=503, detail="Ingestion API is missing its server key.")
+    if not x_ingest_token or not secrets.compare_digest(x_ingest_token, ingest_key):
+        raise HTTPException(status_code=401, detail="Invalid ingestion token.")
+
+    knowledge_base_value = os.getenv("KNOWLEDGE_BASE", str(PROJECT_ROOT / "knowledge_base"))
     try:
         index_count = ingest(Path(knowledge_base_value))
     except Exception as exc:  # pragma: no cover - surfaced as API error
@@ -66,7 +79,7 @@ def ask_question(payload: QuestionRequest) -> dict[str, str | list[dict[str, obj
 
     try:
         sources = retrieve_context(question)
-        answer = answer_question(question)
+        answer = answer_question(question, sources)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

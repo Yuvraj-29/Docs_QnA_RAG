@@ -13,11 +13,15 @@ dependencies = [
     "langchain-text-splitters>=0.3.8",
     "pypdf>=5.4.0",
     "qdrant-client>=1.14.2",
-    "sentence-transformers>=4.1.0",
     "fastapi>=0.143.0",
     "uvicorn>=0.54.0",
     "python-multipart>=0.0.32",
+    "huggingface-hub>=0.30.0",
+    "numpy>=2.0.0",
 ]
+
+[project.optional-dependencies]
+local-embeddings = ["sentence-transformers>=4.1.0"]
 
 [project.scripts]
 docs-qna-rag = "docs_qna_rag:main"
